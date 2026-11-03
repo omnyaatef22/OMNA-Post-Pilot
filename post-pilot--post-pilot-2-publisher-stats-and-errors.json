@@ -1,0 +1,1039 @@
+{
+  "name": "Post Pilot 2 · Publisher, Stats & Errors",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "n426",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Turn any failure into one row: which workflow, which node, what kind of error.\nconst e = $json.execution || {}; const wf = $json.workflow || {};\nconst msg = String(e.error?.message || $json.trigger?.error?.message || 'Unknown error').slice(0, 500);\nconst rules = [[/401|403|unauthori[sz]ed|invalid.*(token|credentials)|expired/i,'auth','critical'],[/429|rate limit|too many requests|quota/i,'rate_limit','warning'],\n [/ETIMEDOUT|ECONNRESET|ENOTFOUND|timeout|socket hang up|aborted/i,'network','warning'],[/VALIDATION:/,'validation','info'],\n [/AI_OUTPUT:|JSON|Unexpected token/i,'ai_output','warning'],[/PUT_[A-Z_]+|chat not found|not configured/i,'config','critical']];\nconst [, type, severity] = rules.find(([re]) => re.test(msg)) || [null, 'unknown', 'warning'];\nreturn [{ json: { time: $now.setZone('Africa/Cairo').toFormat('yyyy-MM-dd HH:mm'), workflow: wf.name || '', node: e.lastNodeExecuted || '',\n  type, severity, message: msg, execution_url: e.url || '',\n  text: (severity === 'critical' ? '🚨' : '⚠️') + ' ' + (wf.name || 'Workflow') + ' · ' + type + '\\nNode: ' + (e.lastNodeExecuted || '?') + '\\n' + msg + '\\n' + (e.url || '') } }];"
+      },
+      "id": "n427",
+      "name": "Classify Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 803,
+          "mode": "id",
+          "cachedResultName": "Errors"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "time": "={{ $json.time }}",
+            "workflow": "={{ $json.workflow }}",
+            "node": "={{ $json.node }}",
+            "type": "={{ $json.type }}",
+            "message": "={{ $json.message }}",
+            "execution_url": "={{ $json.execution_url }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "time",
+              "displayName": "time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "node",
+              "displayName": "node",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "type",
+              "displayName": "type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "message",
+              "displayName": "message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "execution_url",
+              "displayName": "execution_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW",
+          "useAppend": true
+        }
+      },
+      "id": "n428",
+      "name": "Log Error",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        448,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_CHAT_ID",
+        "text": "={{ $('Classify Error').item.json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "n429",
+      "name": "Alert Team",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        672,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c430",
+              "leftValue": "={{ $('Classify Error').item.json.severity }}",
+              "rightValue": "critical",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "n431",
+      "name": "Critical?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "YOUR_SEND_TO",
+        "subject": "={{ 'CRITICAL: ' + $('Classify Error').item.json.workflow + ' · ' + $('Classify Error').item.json.type }}",
+        "emailType": "text",
+        "message": "={{ $('Classify Error').item.json.text }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "n432",
+      "name": "Email Critical Error",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        -16
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "n433",
+      "name": "Every 10 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "approved"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n434",
+      "name": "Read Approved",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        224,
+        304
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per (post, platform) that is due and not yet published there. Re-runs never double-post.\nconst now = $now.setZone('Africa/Cairo').toFormat('yyyy-MM-dd HH:mm'); const out = [];\nfor (const { json: c } of $input.all()) {\n  if (!c.content_id || !c.scheduled_at || c.scheduled_at > now) continue;\n  for (const p of String(c.platforms).split(',').map(s => s.trim())) {\n    if (p === 'facebook' && !c.fb_post_id) out.push({ json: { platform: p, content_id: c.content_id, text: c.fb_text, topic: c.topic } });\n    if (p === 'linkedin' && !c.li_post_id) out.push({ json: { platform: p, content_id: c.content_id, text: c.li_text, topic: c.topic } });\n  }\n}\nreturn out;"
+      },
+      "id": "n435",
+      "name": "Due Now",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c436",
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "facebook",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "facebook"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c437",
+                    "leftValue": "={{ $json.platform }}",
+                    "rightValue": "linkedin",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "linkedin"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "n438",
+      "name": "Route Platform",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        672,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "hostUrl": "graph",
+        "httpRequestMethod": "POST",
+        "node": "PUT_FACEBOOK_PAGE_ID",
+        "edge": "feed",
+        "options": {
+          "queryParameters": {
+            "parameter": [
+              {
+                "name": "message",
+                "value": "={{ $json.text }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "n439",
+      "name": "Post to Facebook Page",
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        880,
+        208
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "postAs": "organization",
+        "organization": "PUT_LINKEDIN_ORGANIZATION_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {}
+      },
+      "id": "n440",
+      "name": "Post to LinkedIn",
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [
+        880,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "content_id": "={{ $('Route Platform').item.json.content_id }}",
+            "fb_post_id": "={{ $json.id }}",
+            "status": "posted",
+            "posted_at": "={{ $now.setZone('Africa/Cairo').toFormat('yyyy-MM-dd HH:mm') }}"
+          },
+          "matchingColumns": [
+            "content_id"
+          ],
+          "schema": [
+            {
+              "id": "content_id",
+              "displayName": "content_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "fb_post_id",
+              "displayName": "fb_post_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "posted_at",
+              "displayName": "posted_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "n441",
+      "name": "Record Facebook Post",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1104,
+        160
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "content_id": "={{ $('Route Platform').item.json.content_id }}",
+            "li_post_id": "={{ $json.urn || $json.id || 'posted' }}",
+            "status": "posted",
+            "posted_at": "={{ $now.setZone('Africa/Cairo').toFormat('yyyy-MM-dd HH:mm') }}"
+          },
+          "matchingColumns": [
+            "content_id"
+          ],
+          "schema": [
+            {
+              "id": "content_id",
+              "displayName": "content_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "li_post_id",
+              "displayName": "li_post_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "posted_at",
+              "displayName": "posted_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "n442",
+      "name": "Record LinkedIn Post",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1104,
+        448
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_CHAT_ID",
+        "text": "={{ '❌ Could not publish ' + $('Route Platform').item.json.content_id + ' on ' + $('Route Platform').item.json.platform + ': ' + ($json.error?.message || $json.error || 'unknown error') + '\\nIt will retry in 10 minutes. Check the token if it keeps failing.' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "n443",
+      "name": "Publishing Failed",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1104,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 20 * * *"
+            }
+          ]
+        }
+      },
+      "id": "n444",
+      "name": "Every Day 20:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "posted"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n445",
+      "name": "Read Posted",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        224,
+        656
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c446",
+              "leftValue": "={{ $json.fb_post_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "n447",
+      "name": "Facebook Posts Only",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "hostUrl": "graph",
+        "node": "={{ $json.fb_post_id }}",
+        "options": {
+          "fields": {
+            "field": [
+              {
+                "name": "reactions.summary(true)"
+              },
+              {
+                "name": "comments.summary(true)"
+              },
+              {
+                "name": "shares"
+              }
+            ]
+          }
+        }
+      },
+      "id": "n448",
+      "name": "Get Facebook Stats",
+      "type": "n8n-nodes-base.facebookGraphApi",
+      "typeVersion": 1,
+      "position": [
+        672,
+        656
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "content_id": "={{ $('Facebook Posts Only').item.json.content_id }}",
+            "likes": "={{ $json.reactions?.summary?.total_count ?? '' }}",
+            "comments": "={{ $json.comments?.summary?.total_count ?? '' }}",
+            "shares": "={{ $json.shares?.count ?? 0 }}"
+          },
+          "matchingColumns": [
+            "content_id"
+          ],
+          "schema": [
+            {
+              "id": "content_id",
+              "displayName": "content_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "likes",
+              "displayName": "likes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "comments",
+              "displayName": "comments",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "shares",
+              "displayName": "shares",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "n449",
+      "name": "Save Stats",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        880,
+        656
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $('Facebook Posts Only').all().map((i, k) => ({ id: i.json.content_id, topic: i.json.topic, s: $('Get Facebook Stats').all()[k]?.json || {} }));\nif (!rows.length) return [];\nconst score = r => (r.s.reactions?.summary?.total_count || 0) + 2 * (r.s.comments?.summary?.total_count || 0) + 3 * (r.s.shares?.count || 0);\nrows.sort((a, b) => score(b) - score(a));\nreturn [{ json: { text: '📈 Engagement today\\n' + rows.slice(0, 10).map(r => '• ' + r.id + ' · ' + String(r.topic).slice(0, 40) + ' · ❤️ ' + (r.s.reactions?.summary?.total_count || 0) + ' 💬 ' + (r.s.comments?.summary?.total_count || 0) + ' 🔁 ' + (r.s.shares?.count || 0)).join('\\n') } }];"
+      },
+      "id": "n450",
+      "name": "Daily Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        656
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "n451",
+      "name": "Post Summary",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1328,
+        656
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Classify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Error": {
+      "main": [
+        [
+          {
+            "node": "Log Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error": {
+      "main": [
+        [
+          {
+            "node": "Alert Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Team": {
+      "main": [
+        [
+          {
+            "node": "Critical?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critical?": {
+      "main": [
+        [
+          {
+            "node": "Email Critical Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 10 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Read Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Approved": {
+      "main": [
+        [
+          {
+            "node": "Due Now",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Due Now": {
+      "main": [
+        [
+          {
+            "node": "Route Platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Platform": {
+      "main": [
+        [
+          {
+            "node": "Post to Facebook Page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Facebook Page": {
+      "main": [
+        [
+          {
+            "node": "Record Facebook Post",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publishing Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Record LinkedIn Post",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publishing Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every Day 20:00": {
+      "main": [
+        [
+          {
+            "node": "Read Posted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Posted": {
+      "main": [
+        [
+          {
+            "node": "Facebook Posts Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Facebook Posts Only": {
+      "main": [
+        [
+          {
+            "node": "Get Facebook Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Facebook Stats": {
+      "main": [
+        [
+          {
+            "node": "Save Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Stats": {
+      "main": [
+        [
+          {
+            "node": "Daily Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Summary": {
+      "main": [
+        [
+          {
+            "node": "Post Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Cairo"
+  }
+}

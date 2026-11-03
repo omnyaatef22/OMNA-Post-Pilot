@@ -1,0 +1,1146 @@
+{
+  "name": "Post Pilot 1 · Drafts & Approval",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "n452",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 802,
+          "mode": "id",
+          "cachedResultName": "Rules"
+        },
+        "options": {}
+      },
+      "id": "n453",
+      "name": "Read Rules",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        220,
+        0
+      ],
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "options": {}
+      },
+      "id": "n454",
+      "name": "Read Content Queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        440,
+        0
+      ],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// New topics and topics sent back with feedback. Check the brief before spending an AI call.\nconst now = $now.setZone('Africa/Cairo').toFormat('yyyy-MM-dd HH:mm');\nconst out = [];\nfor (const { json: c } of $input.all()) {\n  if (!c.content_id || !['new', 'revise'].includes(c.status)) continue;\n  const p = []; const plats = String(c.platforms || '').split(',').map(s => s.trim()).filter(Boolean);\n  if (!plats.length || plats.some(x => !['facebook', 'linkedin'].includes(x))) p.push('platforms must be facebook and/or linkedin');\n  if (!['en', 'ar'].includes(c.language)) p.push('language must be en or ar');\n  if (!/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$/.test(c.scheduled_at || '') || c.scheduled_at <= now) p.push('scheduled_at must be a future \"YYYY-MM-DD HH:mm\"');\n  if (String(c.topic || '').length < 10) p.push('topic too short');\n  if (Number(c.revisions || 0) >= 3) p.push('3 drafts rejected: a human should write this one');\n  out.push({ json: { ...c, plats, brief_problems: p } });\n}\nreturn out;"
+      },
+      "id": "n455",
+      "name": "Pick Topics to Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c456",
+              "leftValue": "={{ $json.brief_problems.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "n457",
+      "name": "Brief OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rules = $('Read Rules').all().map(i => i.json); const tags = rules.filter(r => r.type === 'required_hashtag').map(r => r.value);\nconst banned = rules.filter(r => r.type === 'banned').map(r => r.value);\nreturn $input.all().map(({ json: c }) => ({ json: { ...c, prompt: 'Write social media posts for an Egyptian education/automation brand. Topic: ' + c.topic + '. Language: ' + (c.language === 'ar' ? 'Egyptian Arabic' : 'English') +\n  '. Platforms: ' + c.plats.join(', ') + '. Facebook: friendly, max 900 characters, 1 question to the audience. LinkedIn: professional, max 1300 characters, 3 short paragraphs. Include ' + tags.join(' ') + '. Never use: ' + banned.join(', ') +\n  (c.feedback ? '. The previous draft was rejected with this feedback, fix it: ' + c.feedback : '') + '. Return JSON only: {\"facebook\": \"\", \"linkedin\": \"\"} (empty string for platforms not requested).' } }));"
+      },
+      "id": "n458",
+      "name": "Prepare Draft Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: $json.prompt }].concat($json.b64 ? [{ inline_data: { mime_type: $json.mime, data: $json.b64 } }] : []) }], generationConfig: { responseMimeType: 'application/json', temperature: 0.1 } }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "n459",
+      "name": "AI Draft Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "// Platform limits, banned words and required hashtags are rules, not suggestions.\nconst rules = $('Read Rules').all().map(i => i.json); const val = t => rules.filter(r => r.type === t).map(r => r.value);\nconst lim = { facebook: Number(val('fb_max_chars')[0] || 2000), linkedin: Number(val('li_max_chars')[0] || 3000) };\nreturn $input.all().map((it, k) => {\n  const c = $('Prepare Draft Prompt').all()[k].json; let d; const p = [];\n  try { d = JSON.parse((it.json.candidates?.[0]?.content?.parts || []).map(x => x.text).join('')); } catch (e) { d = {}; p.push('AI returned invalid JSON'); }\n  const out = {};\n  for (const pl of c.plats) {\n    let t = String(d[pl] || '').trim(); if (!t) { p.push(pl + ' draft empty'); continue; }\n    for (const tag of val('required_hashtag')) if (!t.includes(tag)) t += ' ' + tag;\n    for (const b of val('banned')) if (t.toLowerCase().includes(b.toLowerCase())) p.push(pl + ' uses banned phrase \"' + b + '\"');\n    if (t.length > lim[pl]) p.push(pl + ' is ' + t.length + ' characters (max ' + lim[pl] + ')');\n    out[pl] = t;\n  }\n  return { json: { ...c, prompt: undefined, fb_text: out.facebook || '', li_text: out.linkedin || '', draft_problems: p, revisions: Number(c.revisions || 0) + 1 } };\n});"
+      },
+      "id": "n460",
+      "name": "Check Drafts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c461",
+              "leftValue": "={{ $json.draft_problems.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "n462",
+      "name": "Drafts OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1760,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "content_id": "={{ $json.content_id }}",
+            "status": "pending_approval",
+            "fb_text": "={{ $json.fb_text }}",
+            "li_text": "={{ $json.li_text }}",
+            "revisions": "={{ $json.revisions }}",
+            "problems": ""
+          },
+          "matchingColumns": [
+            "content_id"
+          ],
+          "schema": [
+            {
+              "id": "content_id",
+              "displayName": "content_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "fb_text",
+              "displayName": "fb_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "li_text",
+              "displayName": "li_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "revisions",
+              "displayName": "revisions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "problems",
+              "displayName": "problems",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "n463",
+      "name": "Save Drafts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1980,
+        -200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_CHAT_ID",
+        "text": "={{ '📝 ' + $('Check Drafts').item.json.content_id + ' · ' + $('Check Drafts').item.json.topic + '\\n🕒 ' + $('Check Drafts').item.json.scheduled_at + ($('Check Drafts').item.json.fb_text ? '\\n\\n— Facebook —\\n' + $('Check Drafts').item.json.fb_text : '') + ($('Check Drafts').item.json.li_text ? '\\n\\n— LinkedIn —\\n' + $('Check Drafts').item.json.li_text : '') + '\\n\\nTo request changes: /edit ' + $('Check Drafts').item.json.content_id + ' your feedback' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        },
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ Approve",
+                    "additionalFields": {
+                      "callback_data": "={{ 'pp:approve:' + $('Check Drafts').item.json.content_id }}"
+                    }
+                  },
+                  {
+                    "text": "❌ Reject",
+                    "additionalFields": {
+                      "callback_data": "={{ 'pp:reject:' + $('Check Drafts').item.json.content_id }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "id": "n464",
+      "name": "Send for Approval",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2200,
+        -200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "content_id": "={{ $('Check Drafts').item.json.content_id }}",
+            "approval_message_id": "={{ $json.result.message_id }}"
+          },
+          "matchingColumns": [
+            "content_id"
+          ],
+          "schema": [
+            {
+              "id": "content_id",
+              "displayName": "content_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "approval_message_id",
+              "displayName": "approval_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "n465",
+      "name": "Save Approval Message",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2420,
+        -200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "content_id": "={{ $json.content_id }}",
+            "status": "={{ $json.revisions >= 3 ? 'needs_human' : 'revise' }}",
+            "feedback": "={{ $json.draft_problems.join('; ') }}",
+            "revisions": "={{ $json.revisions }}",
+            "problems": "={{ $json.draft_problems.join('; ') }}"
+          },
+          "matchingColumns": [
+            "content_id"
+          ],
+          "schema": [
+            {
+              "id": "content_id",
+              "displayName": "content_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "feedback",
+              "displayName": "feedback",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "revisions",
+              "displayName": "revisions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "problems",
+              "displayName": "problems",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "n466",
+      "name": "Send Back for Redraft",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1980,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "content_id": "={{ $json.content_id }}",
+            "status": "needs_human",
+            "problems": "={{ $json.brief_problems.join('; ') }}"
+          },
+          "matchingColumns": [
+            "content_id"
+          ],
+          "schema": [
+            {
+              "id": "content_id",
+              "displayName": "content_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "problems",
+              "displayName": "problems",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "n467",
+      "name": "Mark Brief Problem",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1100,
+        120
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_CHAT_ID",
+        "text": "={{ '✋ ' + $('Pick Topics to Draft').item.json.content_id + ' needs attention: ' + $('Pick Topics to Draft').item.json.brief_problems.join('; ') }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "n468",
+      "name": "Tell Team: Needs a Human",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        120
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "n469",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Buttons: pp:approve:C-001 / pp:reject:C-001. Text: /edit C-001 make it shorter. Only listed approvers count.\nconst APPROVERS = ['PUT_APPROVER_USERNAME'];\nconst q = $json.callback_query; const m = $json.message;\nif (q && String(q.data).startsWith('pp:')) { const [, action, id] = q.data.split(':');\n  return [{ json: { kind: 'button', action, content_id: id, user: q.from.username || '', allowed: APPROVERS.includes(q.from.username), query_id: q.id, chat_id: q.message.chat.id, message_id: q.message.message_id, original: q.message.text } }]; }\nconst e = String(m?.text || '').match(/^\\/edit(?:@\\w+)?\\s+(C-\\d+)\\s+([\\s\\S]{5,})/i);\nif (e) return [{ json: { kind: 'edit', action: 'edit', content_id: e[1].toUpperCase(), feedback: e[2].trim(), user: m.from.username || '', allowed: APPROVERS.includes(m.from.username), chat_id: m.chat.id, message_id: m.message_id } }];\nreturn [];"
+      },
+      "id": "n470",
+      "name": "Parse Approval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "options": {},
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "content_id",
+              "lookupValue": "={{ $json.content_id }}"
+            }
+          ]
+        }
+      },
+      "id": "n471",
+      "name": "Find Content",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        440,
+        500
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "const a = $('Parse Approval').first().json; const c = $input.first().json;\nlet ok = true, note;\nif (!a.allowed) { ok = false; note = 'Only approvers can decide.'; }\nelse if (!c.content_id) { ok = false; note = 'Content not found.'; }\nelse if (c.status !== 'pending_approval') { ok = false; note = 'Already ' + c.status + '.'; }\nelse if (a.action === 'approve' && c.scheduled_at <= $now.setZone('Africa/Cairo').toFormat('yyyy-MM-dd HH:mm')) note = 'Approved; the time has passed so it will post in the next 10 minutes.';\nconst status = { approve: 'approved', reject: 'rejected', edit: 'revise' }[a.action];\nreturn [{ json: { ...a, ok, status, note: note || (status === 'revise' ? 'Sent back for a new draft.' : status === 'approved' ? 'Approved ✅ will post at ' + c.scheduled_at : 'Rejected ❌') } }];"
+      },
+      "id": "n472",
+      "name": "Check Approval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c473",
+              "leftValue": "={{ $json.kind }}",
+              "rightValue": "button",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "n474",
+      "name": "Button or Command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "queryId": "={{ $json.query_id }}",
+        "additionalFields": {
+          "text": "={{ $json.note }}",
+          "show_alert": "={{ !$json.ok }}"
+        }
+      },
+      "id": "n475",
+      "name": "Answer Button",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        400
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.note }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "reply_to_message_id": "={{ $json.message_id }}"
+        }
+      },
+      "id": "n476",
+      "name": "Reply to Command",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        600
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c477",
+              "leftValue": "={{ $('Check Approval').item.json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "n478",
+      "name": "Decision Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1320,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 801,
+          "mode": "id",
+          "cachedResultName": "Content"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "content_id": "={{ $('Check Approval').item.json.content_id }}",
+            "status": "={{ $('Check Approval').item.json.status }}",
+            "feedback": "={{ $('Check Approval').item.json.feedback || '' }}"
+          },
+          "matchingColumns": [
+            "content_id"
+          ],
+          "schema": [
+            {
+              "id": "content_id",
+              "displayName": "content_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "feedback",
+              "displayName": "feedback",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "n479",
+      "name": "Record Decision",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1540,
+        500
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Every 30 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Read Rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Rules": {
+      "main": [
+        [
+          {
+            "node": "Read Content Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Content Queue": {
+      "main": [
+        [
+          {
+            "node": "Pick Topics to Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Topics to Draft": {
+      "main": [
+        [
+          {
+            "node": "Brief OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Brief OK?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Draft Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Brief Problem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Draft Prompt": {
+      "main": [
+        [
+          {
+            "node": "AI Draft Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Draft Posts": {
+      "main": [
+        [
+          {
+            "node": "Check Drafts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Drafts": {
+      "main": [
+        [
+          {
+            "node": "Drafts OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drafts OK?": {
+      "main": [
+        [
+          {
+            "node": "Save Drafts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Back for Redraft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Drafts": {
+      "main": [
+        [
+          {
+            "node": "Send for Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send for Approval": {
+      "main": [
+        [
+          {
+            "node": "Save Approval Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Brief Problem": {
+      "main": [
+        [
+          {
+            "node": "Tell Team: Needs a Human",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Approval": {
+      "main": [
+        [
+          {
+            "node": "Find Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Content": {
+      "main": [
+        [
+          {
+            "node": "Check Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Approval": {
+      "main": [
+        [
+          {
+            "node": "Button or Command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Button or Command?": {
+      "main": [
+        [
+          {
+            "node": "Answer Button",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply to Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Button": {
+      "main": [
+        [
+          {
+            "node": "Decision Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision Allowed?": {
+      "main": [
+        [
+          {
+            "node": "Record Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply to Command": {
+      "main": [
+        [
+          {
+            "node": "Decision Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Cairo"
+  }
+}
